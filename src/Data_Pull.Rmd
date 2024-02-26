@@ -1,0 +1,198 @@
+---
+title: "Data_Pull"
+author: "Daniel Dominguez"
+date: "2023-12-05"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+```{r}
+library(tidyverse)
+library(dataRetrieval)
+library(data.table)
+library(rvest)
+library(janitor)
+library(mapview)
+```
+
+```{r}
+
+# Define the HUC codes of interest
+huc_codes <- c("07","05")
+parameter_code <- "00060"
+start_date <- "2010-05-01"
+end_date <- "2023-12-06"
+
+gauges<- whatNWISsites(huc="07",parameterCd="32316", 
+                               startDate = start_date,
+                               endDate = end_date)
+
+
+```
+
+```{r}
+all_sites_sf <- st_as_sf(gauges, 
+                          coords = c("dec_long_va", "dec_lat_va"), 
+                          crs = 4326)
+```
+
+
+```{r}
+# The following code is from Katie Willi it pulls all the data for the following sites.
+# At the exploratory phase its nice to have it all laid out, not sure if this will be neccesary once we have more sites. but to begin with all the data at the supergauges that have estimated chla is nice. 
+gages <- c("05331580", "05344490", "05341550", "05341812", "05559900", "05553700",
+           "05537980", "05536356", "05515500")
+```
+
+```{r}
+
+# what data exists at these sites?
+inventory <- dataRetrieval::whatNWISdata(siteNumber = gages) %>%
+  filter(year(end_date) >= 2021)
+
+# pull up a USGS pcode lookup table to understand what TF any of these codes actually 
+# relate to:
+tables <- rvest::read_html('https://help.waterdata.usgs.gov/parameter_cd?group_cd=%') %>%
+  rvest::html_nodes('table') %>%
+  rvest::html_table()
+
+pcodes <- tables[[1]] %>%
+  janitor::clean_names() %>%
+  dplyr::mutate(parm_cd = stringr::str_pad(as.character(parameter_code), 5, pad = "0"))
+
+# join this USGS lookup table to our inventory, then remove unnecessary columns:
+inventory <- inventory %>%
+  dplyr::left_join(pcodes, by = "parm_cd") %>%
+  dplyr::select(c(site_no,
+                  site_name = station_nm,
+                  data_type_cd,
+                  site_type_cd = site_tp_cd,
+                  n_obs = count_nu,
+                  begin_date,
+                  end_date,
+                  parameter = parameter_name_description,
+                  code = parm_cd)) %>%
+  filter(!is.na(code))
+
+```
+
+```{r}
+
+# add additional information about what kinds of datasets these are (e.g., is it
+# continuous data, grab samples, etc.) by pulling up another USGS lookup table:
+site_url <- 'https://maps.waterdata.usgs.gov/mapper/help/sitetype.html'
+
+table <- rvest::read_html(site_url) %>%
+  rvest::html_nodes('table') %>%
+  rvest::html_table()
+
+table <- rbind(table[[1]],table[[2]],table[[3]],table[[4]],table[[5]]) %>%
+  dplyr::select(site_type_cd = 1,
+                site_type = 2)
+
+# LIST OF ALL AVAILABLE DATA FOR EACH SITE IN PERIOD OF INTEREST
+# (WITH SOME HELPFUL META DATA)
+inventory <- left_join(inventory, table, by = 'site_type_cd') %>%
+  mutate(data_type=case_when(data_type_cd == "dv" ~ "Daily",
+                             data_type_cd == "uv" ~ "Unit",
+                             data_type_cd == "qw" ~ "Water Quality",
+                             data_type_cd == "gw" ~ "Groundwater Levels",
+                             data_type_cd == "iv" ~ "Unit",
+                             data_type_cd == "sv" ~ "Site Visits",
+                             data_type_cd == "pk" ~ "Peak Measurements",
+                             data_type_cd == "ad" ~ "USGS Annual Water Data Report",
+                             data_type_cd == "aw" ~ "Active Groundwater Level Network",
+                             data_type_cd == "id" ~ "Historic Instantaneous")) %>%
+  mutate(combo=paste0(site_no,"-",code))
+
+```
+```{r}
+
+# A function that takes our inventory list, and pulls in each listed site/data 
+# type/time period combo:
+nwis_downloader <- function(row) {
+  
+  try(data <- dataRetrieval::readNWISdata(sites = row$site_no, 
+                                          parameterCd = row$code,
+                                          #service = row$data_type_cd,
+                                          startDate = row$begin_date, 
+                                          endDate = row$end_date))
+  print(paste0(row$site_no, ":", row$parameter, " done!"))
+  
+  return(data)
+  
+}
+
+```
+
+```{r}
+
+# final dataset of all data at the gages of interest from 2021-2023:
+# this is super wide and ugle
+nwis_data <- inventory %>%
+  purrr::pmap(data.frame) %>% 
+  purrr::map_dfr(~ nwis_downloader(row = .)) %>%
+  select(-agency_cd, tz_cd) %>%
+  filter(year(dateTime) >= 2020) 
+
+# pivoting and adding in useful naming conventions for each set of data:
+data <- nwis_data %>%
+  select(-c(names(nwis_data)[grepl("_cd", names(nwis_data))])) %>%
+  data.table::data.table() %>%
+  pivot_longer(., c(names(.)[grepl("X_", names(.))]), names_to = "PCODE", values_to = "value") %>%
+  separate("PCODE", into = c("rem", "pcode", "timeframe"), sep = "_") %>%
+  left_join(pcodes, by = c("pcode" = "parm_cd")) %>%
+  select(site_no, dateTime, pcode, value, parameter_unit, parameter_name_description)
+
+# pivoting and adding in approval status of each observation in the time-series:
+approval <- nwis_data %>%
+  data.table::data.table() %>%
+  pivot_longer(., c(names(nwis_data)[grepl("_cd", names(nwis_data))]), names_to = "idk", values_to = "approval_status") %>%
+  select(approval_status)
+
+# binding together!
+final_df <- cbind(data, approval) %>%
+  dplyr::filter(!is.na(value))
+
+```
+
+
+```{r}
+
+# Define the HUC codes of interest
+huc_codes <- c("07","05")
+parameter_code <- "00060"
+start_date <- "2010-05-01"
+end_date <- "2023-12-06"
+
+gauges<- whatNWISsites(huc="07",parameterCd="32316", 
+                       startDate = start_date,
+                       endDate = end_date)
+
+
+```
+
+```{r}
+data<-data %>% 
+  filter(!is.na(value))
+```
+
+
+```{r}
+all_sites_sf <- st_as_sf(gauges, 
+                         coords = c("dec_long_va", "dec_lat_va"), 
+                         crs = 4326)
+```
+
+```{r}
+mapview(all_sites_sf)
+```
+
+```{r}
+data_common <- data %>%
+  group_by(site_no, pcode) %>%
+  summarize() %>%
+  group_by(pcode) %>%
+  filter(n_distinct(site_no) > 1)
+```
+

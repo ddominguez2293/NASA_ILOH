@@ -1,0 +1,142 @@
+---
+title: "Small_Data_pull"
+author: "Daniel Dominguez"
+date: "2024-02-22"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+```{r}
+library(tidyverse)
+library(dataRetrieval)
+library(data.table)
+library(dplyr)
+```
+
+```{r}
+local_path<-"/Users/danieldominguez/Documents/Code/NASA_ILOH/"
+
+
+```
+
+
+```{r}
+
+# Define the HUC codes of interest
+huc_codes <- c("07")
+parameter_codes <- c("00010","32316","00060")
+start_date <- "2021-05-01"
+end_date <- "2024-01-01"
+
+gauges<- whatNWISsites(huc="07",parameterCd="32316", 
+                               startDate = start_date,
+                               endDate = end_date)
+
+sites<-gauges %>% 
+  select(site_no) %>% 
+  as.list()
+
+```
+
+```{r}
+for (site in sites$site_no) {
+  for (parameter_code in parameter_codes) {
+    data <- readNWISdata(sites = site, parameterCd = parameter_code, 
+                         startDate = start_date, endDate = end_date,
+                         service="dv")
+    filename <- paste("site_", site, "_parameter_", parameter_code, ".csv", sep = "")
+    write.csv(data, file = file.path(local_path, "Data", filename))
+  }
+}
+```
+
+```{r}
+# Function to read CSV files with the same parameter code and combine them
+# This only works for discharge because supergauges are using a weird naming convention in columns
+# This in theory should work for other param codes that are not supergauge sites. 
+read_csv_same_parameter_code <- function(directory, parameter_code) {
+  # Get list of files matching the parameter code pattern in the directory
+  files <- list.files(directory, pattern = paste0("^site_.*_parameter_", parameter_code, "\\.csv$"), full.names = TRUE)
+  
+  # Initialize an empty list to store dataframes
+  data_list <- list()
+  
+  # Loop through each file
+  for (file in files) {
+    # Read the CSV file
+    temp_data <- read.csv(file, stringsAsFactors = FALSE)
+    
+    # Check if the number of columns is greater than or equal to four
+    if (ncol(temp_data) >= 4) {
+      # Select specific columns
+      selected_columns <- c(2, 3, 4, (ncol(temp_data) - 2):(ncol(temp_data) - 1), ncol(temp_data))
+      temp_data <- temp_data[, selected_columns]
+      
+      # Rename the third to last and second to last columns
+      names(temp_data)[ncol(temp_data) - 1] <- "code"
+      names(temp_data)[ncol(temp_data) - 2] <- "value"
+      
+      # Append data to the list
+      data_list <- append(data_list, list(temp_data))
+    } else {
+      # Skip the file and print a message
+      cat("Skipping file", file, "as it has fewer than four columns.\n")
+      next
+    }
+  }
+  
+  # Combine all dataframes into a single dataframe
+  if (length(data_list) > 0) {
+    combined_data <- do.call(rbind, data_list)
+    
+    # Return the combined dataframe
+    return(combined_data)
+  } else {
+    # If no valid files were found, return NULL
+    cat("No valid files found for parameter code", parameter_code, "\n")
+    return(NULL)
+  }
+}
+
+
+```
+
+```{r}
+# Example usage:
+directory <- paste0(local_path,"Data/") # Replace with the directory path where your files are located
+
+data_combined_00060 <- read_csv_same_parameter_code(directory, "00060") %>% 
+  mutate(parameter="Q_cfs")
+data_combined_00010 <- read_csv_same_parameter_code(directory, "00010") %>% 
+  mutate(parameter="temp_c")
+data_combined_32316  <- read_csv_same_parameter_code(directory, "32316") %>% 
+  mutate(parameter="est_chla_microgL")
+
+
+```
+
+```{r}
+# Bind the data frames together
+data_munge <- bind_rows(data_combined_00060, data_combined_00010, data_combined_32316)
+
+# Pivot wider
+pivoted_data <- data_munge %>%
+  pivot_wider(names_from = parameter, values_from = value) %>% 
+  mutate(T_Q=temp_c/Q_cfs) %>% 
+  filter(!is.na(est_chla_microgL))
+
+
+
+```
+
+
+# Process supergaugues
+```{r}
+#data_05536356_32316 <- readNWISdata(sites = "05536356", parameterCd = "32316",
+#                     startDate = start_date, endDate = end_date,
+#                     service="dv") %>% 
+#  select( site_no, dateTime, X_32316_00003, X_32316_00003_cd, tz_cd)
+
+#parameter_codes <- c("00010","32316","00060")
+```
+
