@@ -24,7 +24,7 @@ local_path<-"/Users/danieldominguez/Documents/Code/NASA_ILOH/"
 
 # Define the HUC codes of interest
 huc_codes <- c("07")
-parameter_codes <- c("00010","32316","00060")
+parameter_codes <- c("00060","00010","32316")
 start_date <- "2021-05-01"
 end_date <- "2024-01-01"
 
@@ -45,7 +45,7 @@ for (site in sites$site_no) {
                          startDate = start_date, endDate = end_date,
                          service="dv")
     filename <- paste("site_", site, "_parameter_", parameter_code, ".csv", sep = "")
-    write.csv(data, file = file.path(local_path, "Data", filename))
+    write.csv(data, file = file.path(local_path, "Data", filename),row.names = FALSE)
   }
 }
 ```
@@ -107,36 +107,175 @@ directory <- paste0(local_path,"Data/") # Replace with the directory path where 
 
 data_combined_00060 <- read_csv_same_parameter_code(directory, "00060") %>% 
   mutate(parameter="Q_cfs")
-data_combined_00010 <- read_csv_same_parameter_code(directory, "00010") %>% 
-  mutate(parameter="temp_c")
-data_combined_32316  <- read_csv_same_parameter_code(directory, "32316") %>% 
-  mutate(parameter="est_chla_microgL")
-
-
-```
-
-```{r}
-# Bind the data frames together
-data_munge <- bind_rows(data_combined_00060, data_combined_00010, data_combined_32316)
-
-# Pivot wider
-pivoted_data <- data_munge %>%
-  pivot_wider(names_from = parameter, values_from = value) %>% 
-  mutate(T_Q=temp_c/Q_cfs) %>% 
-  filter(!is.na(est_chla_microgL))
 
 
 
 ```
-
 
 # Process supergaugues
 ```{r}
-#data_05536356_32316 <- readNWISdata(sites = "05536356", parameterCd = "32316",
-#                     startDate = start_date, endDate = end_date,
-#                     service="dv") %>% 
-#  select( site_no, dateTime, X_32316_00003, X_32316_00003_cd, tz_cd)
+start_date <- "2021-04-16"
+end_date <- "2024-03-01"
 
-#parameter_codes <- c("00010","32316","00060")
+data_05536356_32316 <- readNWISdata(sites = "05536356", parameterCd = "32316",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") 
+
+
+# Initialize new column chl_a
+data_05536356_32316$chl_a <- NA
+
+# Loop over each row
+for (i in 1:nrow(data_05536356_32316)) {
+  # Check if X column is not NA, then assign its value to chl_a
+  if (!is.na(data_05536356_32316$X_32316_00003[i])) {
+    data_05536356_32316$chl_a[i] <- data_05536356_32316$X_32316_00003[i]
+  } else {
+    # If X is NA, check Y column
+    if (!is.na(data_05536356_32316$X_AOC.EXO.15K103372_32316_00003[i])) {
+      data_05536356_32316$chl_a[i] <- data_05536356_32316$X_AOC.EXO.15K103372_32316_00003[i]
+    } else {
+      data_05536356_32316$chl_a[i] <- NA
+    }
+  }
+}
+
+data_05536356_32316<-data_05536356_32316 %>% 
+  select(site_no,dateTime,chl_a)
+
+data_05536356_00010 <- readNWISdata(sites = "05536356", parameterCd = "00010",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") 
+
+
+# Initialize new column chl_a
+data_05536356_00010$temp_C <- NA
+
+# Loop over each row
+for (i in 1:nrow(data_05536356_00010)) {
+  # Check if X column is not NA, then assign its value to chl_a
+  if (!is.na(data_05536356_00010$X_AOC.EXO.15K103372_00010_00003[i])) {
+    data_05536356_00010$temp_C[i] <- data_05536356_00010$X_AOC.EXO.15K103372_00010_00003[i]
+  } else {
+    # If X is NA, check Y column
+    if (!is.na(data_05536356_00010$X_.YSI._00010_00003[i])) {
+      data_05536356_00010$temp_C[i] <- data_05536356_00010$X_.YSI._00010_00003[i]
+    } else {
+      # If Y is also NA, check Z column
+      if (!is.na(data_05536356_00010$X_.SL._00010_00003[i])) {
+        data_05536356_00010$temp_C[i] <- data_05536356_00010$X_.SL._00010_00003[i]
+      } else {
+        # If all are NA, assign NA to chl_a
+        data_05536356_00010$temp_C[i] <- NA
+      }
+    }
+  }
+}
+
+data_05536356_00010<-data_05536356_00010 %>% 
+  select(site_no,dateTime,temp_C)
+
+data_05536356_00060<-readNWISdata(sites = "05536356", parameterCd = "00060",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  dplyr::select(site_no,dateTime, Q_cfs=X_00060_00003)
+  
+
+site_05536356_munged<-left_join(data_05536356_00060,data_05536356_32316, by=c("site_no","dateTime"))
+
+site_05536356_munged<-left_join(site_05536356_munged,data_05536356_00010, by=c("site_no","dateTime")) %>% 
+  mutate(T_Q=temp_C/Q_cfs)
+
+```
+
+```{r}
+start_date <- "2021-03-24"
+end_date <- "2024-03-01"
+
+data_05559900_32316 <- readNWISdata(sites = "05559900", parameterCd = "32316",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  select(site_no,dateTime, chl_a=X_32316_00003)
+
+
+data_05559900_00010 <- readNWISdata(sites = "05559900", parameterCd = "00010",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  select(dateTime,temp_C=X_00010_00003)
+
+
+# For now this is the nearest gauge in the river with discharge in the main stem of the Illinois
+data_05559900_00060 <- readNWISdata(sites = "05568500", parameterCd = "00060",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  select(dateTime, Q_cfs=X_00060_00003)
+
+site_05559900_munged<-left_join(data_05559900_32316, data_05559900_00060, by=c("dateTime"))
+
+site_05559900_munged<-left_join(site_05559900_munged,data_05559900_00010, by=c("dateTime")) %>% 
+  mutate(T_Q=temp_C/Q_cfs)
+
+```
+
+```{r}
+start_date <- "2021-04-16"
+end_date <- "2024-01-01"
+
+data_413646087260101_32316 <- readNWISdata(sites = "413646087260101", parameterCd = "32316",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  select(site_no,dateTime, chl_a=X_32316_00003)
+
+data_413646087260101_00010 <- readNWISdata(sites = "413646087260101", parameterCd = "00010",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  select(dateTime,temp_C=X_00010_00003)
+
+data_413646087260101_00060<-readNWISdata(sites = "04092677", parameterCd = "00060",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  dplyr::select(dateTime, Q_cfs=X_00060_00003)
+  
+
+site_413646087260101_munged<-left_join(data_413646087260101_32316,data_413646087260101_00060, by=c("dateTime"))
+
+site_413646087260101_munged<-left_join(site_413646087260101_munged,data_413646087260101_00010, by=c("dateTime")) %>% 
+  mutate(T_Q=temp_C/Q_cfs)
+```
+
+```{r}
+
+# This is a lake wont use until I figure out how to do Q
+# start_date <- "2021-04-15"
+# end_date <- "2024-01-01"
+# 
+# data_423784088133401_32316 <- readNWISdata(sites = "423784088133401", parameterCd = "32316",
+#                      startDate = start_date, endDate = end_date,
+#                      service="dv") %>% 
+#   select(site_no,dateTime, chl_a=X_32316_00003)
+# 
+# data_423784088133401_00010 <- readNWISdata(sites = "423784088133401", parameterCd = "00010",
+#                      startDate = start_date, endDate = end_date,
+#                      service="dv") %>% 
+#   select(dateTime,temp_C=X_00010_00003)
+# 
+# data_423784088133401_00060<-readNWISdata(sites = "423784088133401", parameterCd = "00060",
+#                      startDate = start_date, endDate = end_date,
+#                      service="dv") %>% 
+#   dplyr::select(dateTime, Q_cfs=X_00060_00003)
+#   
+# 
+# site_423784088133401_munged<-left_join(data_423784088133401_32316,data_423784088133401_00060, by=c("dateTime"))
+# 
+# site_423784088133401_munged<-left_join(site_423784088133401_munged,data_423784088133401_00010, by=c("dateTime")) %>% 
+#   mutate(T_Q=temp_C/Q_cfs)
+```
+
+```{r}
+munged_data<-rbind(site_05536356_munged,site_05559900_munged,site_413646087260101_munged) %>% 
+    filter_all(all_vars(!is.na(.)))
+
+write.csv(munged_data,paste0(local_path,"Data/","munged_data.csv"),row.names = FALSE)
+  
 ```
 
