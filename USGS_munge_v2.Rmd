@@ -1,0 +1,220 @@
+---
+title: "USGS_munge_v2"
+author: "Daniel Dominguez"
+date: "2024-09-10"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(dataRetrieval)
+```
+
+```{r}
+local_path<-"/Users/danieldominguez/Documents/Code/NASA_ILOH/" 
+
+directory <- paste0(local_path,"Data/Harmonized_Discrete_Continous_WQD_05_20") 
+```
+
+```{r}
+# all the parameters for the daily files
+parameters<-c("airTemp", "algal", "dissolvedOxygen", "hydro", "nitrogen", "organicMatter", "pH", "phophorus", "sedTurbidity", "specCond", "waterTemp") 
+
+```
+
+```{r}
+read_csv_munge <- function(directory, parameters) {
+  # List all files in the directory
+  files <- list.files(directory, full.names = TRUE)
+  
+  # Filter files that include the pattern "daily"
+  daily_files <- files[grep("daily", files)]
+  
+  # Initialize an empty list to store data frames
+  data_list <- list()
+  
+  # Iterate over each file
+  for (file in daily_files) {
+    # Extract parameter name from the file name
+    parameter <- gsub(".csv", "", basename(file))
+    parameter <- gsub("daily_", "", parameter)
+    
+    # Check if the parameter is in the list of parameters
+    if (parameter %in% parameters) {
+      # Read CSV file and store it in the data list
+      data <- read_csv(file) %>% 
+        filter(.$site_no %in% USGS_fhcl_sites$`.$site_no`)
+      data_list[[parameter]] <- data
+    }
+  }
+  
+  # Combine all data frames into a single data frame
+  combined_df <- do.call(rbind, data_list)
+  
+  return(combined_df)
+}
+```
+
+
+```{r}
+# This started crashing my r environment becasue theres 6.5 million observations in the dataset combined the majority iv, we don't need all that at the moment so I'm going to read in the chla sites and then only load that data that we need from the parameter.
+
+#USGS_munged <- read_csv_munge(directory,parameters)
+USGS_fhcl<-read.csv(file = paste0(directory,"/daily_algal.csv")) %>% 
+  filter(freq == "nwis-dv")   # for now grab all the daily data
+
+USGS_fhcl_sites<-USGS_fhcl %>%  
+  distinct(.$site_no)
+
+USGS_munged <- read_csv_munge(directory,parameters) %>% 
+  filter( stat_name == "mean") %>%  # only want mean for now
+  select(site_no, parameter_grp, date, result_va) 
+
+duplicates<-USGS_munged %>%
+  group_by(site_no, date, parameter_grp) %>%
+  summarise(n = n()) %>%
+  filter(n > 1)
+
+waterTemp<-read.csv(file = paste0(directory,"/daily_waterTemp.csv")) %>% 
+  filter(.$site_no %in% USGS_fhcl$site_no & stat_name == "mean" & freq == "nwis-dv") %>% 
+  filter(.$date %in% USGS_fhcl$date)
+
+USGS_wide<- USGS_munged %>%  
+  pivot_wider( names_from = "parameter_grp",
+              values_from = "result_va",
+              values_fn = mean) %>% 
+  filter(!is.na(algal))
+
+
+USGS_prepped <- USGS_wide %>%
+  select(site_no, dateTime = date, Q_cfs = hydro, chl_a = algal,
+         temp_c = waterTemp)
+```
+
+### Does each site have reliable Q?
+
+```{r}
+# Seeing which stations have a good source of Q since sights i have dont always have q
+
+Site_Q <- USGS_prepped %>%
+  filter(is.na(Q_cfs)) %>%
+  group_by(site_no) %>%
+  summarise(count_na = n())
+
+USGS_total_count<-USGS_prepped %>%
+  group_by(site_no) %>%
+  summarise(total_count = n())
+
+USGS_percent_q <- inner_join(Site_Q, USGS_total_count, by = "site_no") %>%
+  mutate(percent_no_Q = count_na / total_count)
+
+### sites 13093384 and 13173600 have Q but only 3 obs between the two so will throw away not sure why an RFU sensor would have only one obs.
+
+```
+
+## Getting q for the sites that dont have it
+```{r}
+
+# site 11273400 San Joaquin R AB 13 Merced Newman CA getting q from 11261500
+
+start_date<-USGS_prepped %>%
+  filter(site_no == 11273400) %>%
+  arrange(dateTime) %>%
+  slice_head(n = 1) %>%
+  pull(dateTime)
+
+end_date<- USGS_prepped%>%
+  filter(site_no == 11273400) %>%
+  arrange(desc(dateTime)) %>%
+  slice_head(n = 1) %>%
+  pull(dateTime)
+
+data_11261500_00060<-readNWISdata(sites = "11261500", parameterCd = "00060",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  dplyr::select(dateTime, Q_cfs=X_00060_00003)
+
+# Filter USGS_prepped for site_no == 11273400 and matching date
+matching_row <- USGS_prepped %>%
+  filter(site_no == 11273400 & dateTime %in% data_11261500_00060$dateTime)
+
+# If there are matching rows, update Q_cfs in USGS_prepped
+if (nrow(matching_row) > 0) {
+  # Update Q_cfs in USGS_prepped using matching values from data_11261500_00060
+  USGS_prepped <- USGS_prepped %>%
+    left_join(data_11261500_00060, by = c("dateTime", "site_no")) %>%
+    mutate(Q_cfs = ifelse(!is.na(Q_cfs.y), Q_cfs.y, Q_cfs)) %>%
+    select(-Q_cfs.y)
+}
+# now i have Q_cfs for site 11273400
+
+# repeat for site no 441055088280601 with q from upstrea 05542500, needs more attention the site is in a small diversion and is missing half the data maybe because its a culvert. 
+
+# Actually going to drop for now because event the replacment site doesnt have the full range 
+
+```
+
+```{r}
+update_USGS_prepped <- function(gage, replacement_gage) {
+  
+  start_date <- USGS_prepped %>%
+    filter(site_no == gage) %>%
+    arrange(dateTime) %>%
+    slice_head(n = 1) %>%
+    pull(dateTime)
+  
+  end_date <- USGS_prepped %>%
+    filter(site_no == gage) %>%
+    arrange(desc(dateTime)) %>%
+    slice_head(n = 1) %>%
+    pull(dateTime)
+  
+  data_replacement_gage <- readNWISdata(sites = replacement_gage, parameterCd = "00060",
+                                         startDate = start_date, endDate = end_date,
+                                         service = "dv") %>% 
+    dplyr::select(dateTime, Q_cfs = X_00060_00003)
+  
+  matching_row <- USGS_prepped %>%
+    filter(site_no == gage & dateTime %in% data_replacement_gage$dateTime)
+  
+  if (nrow(matching_row) > 0) {
+    USGS_prepped <- USGS_prepped %>%
+      left_join(data_replacement_gage, by ="dateTime") %>%
+      mutate(Q_cfs = ifelse(!is.na(Q_cfs.y), Q_cfs.y, Q_cfs)) %>%
+      select(-Q_cfs.y)
+  }
+  
+  return(USGS_prepped)
+}
+
+```
+
+```{r}
+updated_data <- update_USGS_prepped(gage = 12505330, replacement_gage = 12500450)
+
+site_focus<- USGS_prepped %>% 
+  filter(site_no == 12505330)
+
+data_11261500_00060<-readNWISdata(sites = "12500450", parameterCd = "00060",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") 
+
+updated_summary<- updated_data %>%
+  filter(is.na(Q_cfs)) %>%
+  group_by(site_no) %>%
+  summarise(count_na = n())
+```
+
+
+```{r}
+# filter the sites out that dont have useful q from main df
+
+sites_with_q<- USGS_percent_q %>% 
+  filter(total_count>=100) %>% 
+  filter(!site_no == 411955088280601)
+
+USGS_prepped<-USGS_prepped %>% 
+  filter(site_no %in% sites_with_q$site_no)
+
+
+```
