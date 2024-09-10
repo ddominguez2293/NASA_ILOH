@@ -11,12 +11,13 @@ library(tidyverse)
 library(dataRetrieval)
 library(data.table)
 library(dplyr)
+library(zoo)
 ```
 
 ```{r}
 local_path<-"/Users/danieldominguez/Documents/Code/NASA_ILOH/"
 
-
+getwd()
 ```
 
 
@@ -115,7 +116,7 @@ data_combined_00060 <- read_csv_same_parameter_code(directory, "00060") %>%
 # Process supergaugues
 ```{r}
 start_date <- "2021-04-16"
-end_date <- "2024-03-01"
+end_date <- "2024-03-20"
 
 data_05536356_32316 <- readNWISdata(sites = "05536356", parameterCd = "32316",
                      startDate = start_date, endDate = end_date,
@@ -175,6 +176,51 @@ for (i in 1:nrow(data_05536356_00010)) {
 data_05536356_00010<-data_05536356_00010 %>% 
   select(site_no,dateTime,temp_C)
 
+# data_05536356_00095 <- readNWISdata(sites = "05536356", parameterCd = "00095",
+#                      startDate = start_date, endDate = end_date,
+#                      service="dv") 
+# 
+# data_05536356_00095$spec_cond <- NA
+# 
+# # Loop over each row
+# for (i in 1:nrow(data_05536356_00095)) {
+#   # Check if X column is not NA, then assign its value to chl_a
+#   if (!is.na(data_05536356_00095$X_AOC.EXO.15K103372_00095_00003[i])) {
+#     data_05536356_00095$spec_cond[i] <- data_05536356_00095$X_AOC.EXO.15K103372_00095_00003[i]
+#   } else {
+#     # If X is NA, check Y column
+#     if (!is.na(data_05536356_00095$X_00095_00003[i])) {
+#       data_05536356_00095$spec_cond[i] <- data_05536356_00095$X_00095_00003[i]
+#     }
+#   }
+# }
+# 
+# data_05536356_00095<-data_05536356_00095 %>% 
+#   select(site_no,dateTime,spec_cond)
+
+data_05536356_00300 <- readNWISdata(sites = "05536356", parameterCd = "00300",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") 
+
+data_05536356_00300$DO <- NA
+
+# Loop over each row
+for (i in 1:nrow(data_05536356_00300)) {
+  # Check if X column is not NA, then assign its value to chl_a
+  if (!is.na(data_05536356_00300$X_AOC.EXO.15K103372_00300_00003[i])) {
+    data_05536356_00300$DO[i] <- data_05536356_00300$X_AOC.EXO.15K103372_00300_00003[i]
+  } else {
+    # If X is NA, check Y column
+    if (!is.na(data_05536356_00300$X_SuperGage_00300_00003[i])) {
+      data_05536356_00300$DO[i] <- data_05536356_00300$X_SuperGage_00300_00003[i]
+    }
+  }
+}
+
+data_05536356_00300<-data_05536356_00300 %>% 
+  select(site_no,dateTime,DO)
+
+
 data_05536356_00060<-readNWISdata(sites = "05536356", parameterCd = "00060",
                      startDate = start_date, endDate = end_date,
                      service="dv") %>% 
@@ -183,6 +229,8 @@ data_05536356_00060<-readNWISdata(sites = "05536356", parameterCd = "00060",
 
 site_05536356_munged<-left_join(data_05536356_00060,data_05536356_32316, by=c("site_no","dateTime"))
 
+site_05536356_munged<-left_join(site_05536356_munged,data_05536356_00300, by=c("site_no","dateTime"))
+
 site_05536356_munged<-left_join(site_05536356_munged,data_05536356_00010, by=c("site_no","dateTime")) %>% 
   mutate(T_Q=temp_C/Q_cfs)
 
@@ -190,7 +238,7 @@ site_05536356_munged<-left_join(site_05536356_munged,data_05536356_00010, by=c("
 
 ```{r}
 start_date <- "2021-03-24"
-end_date <- "2024-03-01"
+end_date <- "2024-03-20"
 
 data_05559900_32316 <- readNWISdata(sites = "05559900", parameterCd = "32316",
                      startDate = start_date, endDate = end_date,
@@ -203,6 +251,15 @@ data_05559900_00010 <- readNWISdata(sites = "05559900", parameterCd = "00010",
                      service="dv") %>% 
   select(dateTime,temp_C=X_00010_00003)
 
+# data_05559900_00095 <- readNWISdata(sites = "05559900", parameterCd = "00095",
+#                      startDate = start_date, endDate = end_date,
+#                      service="dv") %>% 
+#   select(dateTime,spec_cond=X_00095_00003)
+
+data_05559900_00300 <- readNWISdata(sites = "05559900", parameterCd = "00300",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  select(dateTime,DO=X_00300_00003)
 
 # For now this is the nearest gauge in the river with discharge in the main stem of the Illinois
 data_05559900_00060 <- readNWISdata(sites = "05568500", parameterCd = "00060",
@@ -210,7 +267,10 @@ data_05559900_00060 <- readNWISdata(sites = "05568500", parameterCd = "00060",
                      service="dv") %>% 
   select(dateTime, Q_cfs=X_00060_00003)
 
+
 site_05559900_munged<-left_join(data_05559900_32316, data_05559900_00060, by=c("dateTime"))
+
+site_05559900_munged<-left_join(site_05559900_munged, data_05559900_00300, by=c("dateTime"))
 
 site_05559900_munged<-left_join(site_05559900_munged,data_05559900_00010, by=c("dateTime")) %>% 
   mutate(T_Q=temp_C/Q_cfs)
@@ -219,7 +279,7 @@ site_05559900_munged<-left_join(site_05559900_munged,data_05559900_00010, by=c("
 
 ```{r}
 start_date <- "2021-04-16"
-end_date <- "2024-01-01"
+end_date <- "2024-03-20"
 
 data_413646087260101_32316 <- readNWISdata(sites = "413646087260101", parameterCd = "32316",
                      startDate = start_date, endDate = end_date,
@@ -231,17 +291,129 @@ data_413646087260101_00010 <- readNWISdata(sites = "413646087260101", parameterC
                      service="dv") %>% 
   select(dateTime,temp_C=X_00010_00003)
 
+data_413646087260101_00300 <- readNWISdata(sites = "413646087260101", parameterCd = "00300",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  select(dateTime,DO=X_00300_00003)
+
 data_413646087260101_00060<-readNWISdata(sites = "04092677", parameterCd = "00060",
                      startDate = start_date, endDate = end_date,
                      service="dv") %>% 
   dplyr::select(dateTime, Q_cfs=X_00060_00003)
   
 
+
 site_413646087260101_munged<-left_join(data_413646087260101_32316,data_413646087260101_00060, by=c("dateTime"))
+
+site_413646087260101_munged<-left_join(site_413646087260101_munged,data_413646087260101_00300, by=c("dateTime"))
 
 site_413646087260101_munged<-left_join(site_413646087260101_munged,data_413646087260101_00010, by=c("dateTime")) %>% 
   mutate(T_Q=temp_C/Q_cfs)
 ```
+
+# Ohio basin
+```{r}
+start_date <- "2021-06-16"
+end_date <- "2024-03-20"
+
+data_03378500_32316 <- readNWISdata(sites = "03378500", parameterCd = "32316",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  select(site_no,dateTime, chl_a=X_32316_00003)
+
+data_03378500_00010 <- readNWISdata(sites = "03378500", parameterCd = "00010",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  select(dateTime,temp_C=X_00010_00003)
+
+data_03378500_00300 <- readNWISdata(sites = "03378500", parameterCd = "00300",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  select(dateTime,DO=X_00300_00003)
+
+data_03378500_00060<-readNWISdata(sites = "03378500", parameterCd = "00060",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  dplyr::select(dateTime, Q_cfs=X_00060_00003)
+  
+
+
+site_03378500_munged<-left_join(data_03378500_32316,data_03378500_00060, by=c("dateTime"))
+
+site_03378500_munged<-left_join(site_03378500_munged,data_03378500_00300, by=c("dateTime"))
+
+site_03378500_munged<-left_join(site_03378500_munged,data_03378500_00010, by=c("dateTime")) %>% 
+  mutate(T_Q=temp_C/Q_cfs)
+```
+
+```{r}
+start_date <- "2021-06-16"
+end_date <- "2024-03-20"
+
+data_03303280_32316 <- readNWISdata(sites = "03303280", parameterCd = "32316",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  select(site_no,dateTime, chl_a=X_32316_00003)
+
+data_03303280_00010 <- readNWISdata(sites = "03303280", parameterCd = "00010",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  select(dateTime,temp_C=X_00010_00003)
+
+data_03303280_00300 <- readNWISdata(sites = "03303280", parameterCd = "00300",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  select(dateTime,DO=X_00300_00003)
+
+data_03303280_00060<-readNWISdata(sites = "03303280", parameterCd = "00060",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  dplyr::select(dateTime, Q_cfs=X_00060_00003)
+  
+
+
+site_03303280_munged<-left_join(data_03303280_32316,data_03303280_00060, by=c("dateTime"))
+
+site_03303280_munged<-left_join(site_03303280_munged,data_03303280_00300, by=c("dateTime"))
+
+site_03303280_munged<-left_join(site_03303280_munged,data_03303280_00010, by=c("dateTime")) %>% 
+  mutate(T_Q=temp_C/Q_cfs)
+```
+
+```{r}
+start_date <- "2021-06-16"
+end_date <- "2024-03-20"
+
+data_03216070_32316 <- readNWISdata(sites = "03216070", parameterCd = "32316",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  select(site_no,dateTime, chl_a=X_32316_00003)
+
+data_03216070_00010 <- readNWISdata(sites = "03216070", parameterCd = "00010",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  select(dateTime,temp_C=X_00010_00003)
+
+data_03216070_00300 <- readNWISdata(sites = "03216070", parameterCd = "00300",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  select(dateTime,DO=X_00300_00003)
+
+data_03216070_00060<-readNWISdata(sites = "03216070", parameterCd = "00060",
+                     startDate = start_date, endDate = end_date,
+                     service="dv") %>% 
+  dplyr::select(dateTime, Q_cfs=X_00060_00003)
+  
+
+
+site_03216070_munged<-left_join(data_03216070_32316,data_03216070_00060, by=c("dateTime"))
+
+site_03216070_munged<-left_join(site_03216070_munged,data_03216070_00300, by=c("dateTime"))
+
+site_03216070_munged<-left_join(site_03216070_munged,data_03216070_00010, by=c("dateTime")) %>% 
+  mutate(T_Q=temp_C/Q_cfs)
+```
+
 
 ```{r}
 
@@ -272,10 +444,16 @@ site_413646087260101_munged<-left_join(site_413646087260101_munged,data_41364608
 ```
 
 ```{r}
-munged_data<-rbind(site_05536356_munged,site_05559900_munged,site_413646087260101_munged) %>% 
-    filter_all(all_vars(!is.na(.)))
+munged_data<-rbind(site_05536356_munged,site_05559900_munged,site_413646087260101_munged,
+                   site_03378500_munged, site_03303280_munged,site_03216070_munged) %>% #site_413646087260101_munged can be used without spec_cond
+    filter_all(all_vars(!is.na(.)))%>%
+  
+  mutate(water_year = if_else(month(dateTime) >= 10, year(dateTime) + 1, year(dateTime)),
+         month=month(dateTime)) # %>% 
+  #mutate_all(~ifelse(. < 0, 0, .))  # Replace negative numbers with zero
 
 write.csv(munged_data,paste0(local_path,"Data/","munged_data.csv"),row.names = FALSE)
   
-```
 
+
+```
