@@ -130,8 +130,8 @@ end_date<- USGS_prepped%>%
 
 data_11261500_00060<-readNWISdata(sites = "11261500", parameterCd = "00060",
                      startDate = start_date, endDate = end_date,
-                     service="dv") %>% 
-  dplyr::select(dateTime, Q_cfs=X_00060_00003)
+                     service="dv") %>%
+  dplyr::select(site_no, dateTime, Q_cfs = X_00060_00003)
 
 # Filter USGS_prepped for site_no == 11273400 and matching date
 matching_row <- USGS_prepped %>%
@@ -170,15 +170,15 @@ update_USGS_prepped <- function(gage, replacement_gage) {
   
   data_replacement_gage <- readNWISdata(sites = replacement_gage, parameterCd = "00060",
                                          startDate = start_date, endDate = end_date,
-                                         service = "dv") %>% 
-    dplyr::select(dateTime, Q_cfs = X_00060_00003)
+                                         service = "dv") %>%
+    dplyr::select(site_no, dateTime, Q_cfs = X_00060_00003)
   
   matching_row <- USGS_prepped %>%
     filter(site_no == gage & dateTime %in% data_replacement_gage$dateTime)
   
   if (nrow(matching_row) > 0) {
     USGS_prepped <- USGS_prepped %>%
-      left_join(data_replacement_gage, by ="dateTime") %>%
+      left_join(data_replacement_gage, by = c("dateTime", "site_no")) %>%
       mutate(Q_cfs = ifelse(!is.na(Q_cfs.y), Q_cfs.y, Q_cfs)) %>%
       select(-Q_cfs.y)
   }
